@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: deploy-backend
+  datasource:
+    url: jdbc:mysql://localhost:3306/vue_bag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      # 启动时自动执行 schema.sql（CREATE TABLE IF NOT EXISTS + INSERT IGNORE，幂等）
+      mode: always
+      schema-locations: classpath:schema.sql
+      # 存量库补字段的 ALTER 重复执行会报列已存在，忽略即可
+      continue-on-error: true
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+
+deploy:
+  # 项目留空 localPath 时，代码统一 clone 到该目录下
+  workspace: D:/deploy-workspace
+  # 服务器密码 AES 加密密钥（16位），可自行修改，修改后需重新录入服务器密码
+  aes-key: cc-deploy-key-16

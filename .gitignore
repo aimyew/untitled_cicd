@@ -1,0 +1,19 @@
+# Java
+deploy-backend/target/
+deploy-backend/src/main/resources/schemaExec.sql
+*.class
+
+# 部署工作区（clone下来的业务项目）
+deploy_workspace/
+
+# Node
+deploy-frontend/node_modules/
+deploy-frontend/dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 日志
+*.log
