@@ -62,8 +62,13 @@ public class DeployTask implements Runnable {
             stepBuild(projectDir);
             Path artifact = stepResolveArtifact(projectDir);
             stepUpload(artifact);
-            stepRemoteDeploy();
-            success = true;
+            stepEnsureScript();
+            try {
+                stepRemoteDeploy();
+                success = true;
+            } finally {
+                stepCleanupScript();
+            }
             appendLog("========== 部署成功 ==========");
         } catch (Exception e) {
             log.error("部署失败: {}", project.getName(), e);
@@ -113,7 +118,36 @@ public class DeployTask implements Runnable {
         if (Project.TYPE_JAVA.equals(project.getType()) && StringUtils.hasText(project.getBuildProfile())) {
             cmd += " -P " + project.getBuildProfile().trim();
         }
+        // npm 项目自动加上 --legacy-peer-deps，避免 peer dependency 冲突
+        if (Project.TYPE_VUE.equals(project.getType())) {
+            cmd = ensureNpmLegacyPeerDeps(cmd);
+        }
         CommandUtil.execOrThrow(projectDir.toFile(), cmd, this::appendLog);
+    }
+
+    /** 为 npm install 命令自动追加 --legacy-peer-deps */
+    private String ensureNpmLegacyPeerDeps(String cmd) {
+        if (cmd == null || !cmd.contains("npm install") || cmd.contains("--legacy-peer-deps")) {
+            return cmd;
+        }
+        return cmd.replaceAll("(?<!\\S)npm\\s+install(?!\\S)", "npm install --legacy-peer-deps");
+    }
+
+    /** 步骤5.5：部署命令执行完后，清理目录下脚本文件 */
+    private void stepCleanupScript() {
+        if (!StringUtils.hasText(project.getScriptName())) {
+            return;
+        }
+        String uploadDir = project.getUploadDir();
+        String scriptFile = project.getScriptName();
+        String remotePath = uploadDir.endsWith("/") ? uploadDir + scriptFile : uploadDir + "/" + scriptFile;
+        appendLog("清理脚本文件: " + remotePath);
+        try {
+            SshUtil.exec(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
+                    "rm -f '" + remotePath + "'", this::appendLog);
+        } catch (Exception e) {
+            appendLog("[WARN] 清理脚本文件失败: " + e.getMessage());
+        }
     }
 
     /** 步骤3：定位产物；Vue 的 dist 目录压缩为 dist.zip */
@@ -156,7 +190,50 @@ public class DeployTask implements Runnable {
                 artifact.toFile(), project.getUploadDir(), this::appendLog);
     }
 
-    /** 步骤5：远程执行部署命令（可选） */
+    /** 步骤5：检查目录下脚本是否存在，不存在则创建 */
+    private void stepEnsureScript() {
+        if (!StringUtils.hasText(project.getScriptName())) {
+            return;
+        }
+        updateStep("检查脚本");
+        String uploadDir = project.getUploadDir();
+        String scriptFile = project.getScriptName();
+        String remotePath = uploadDir.endsWith("/") ? uploadDir + scriptFile : uploadDir + "/" + scriptFile;
+
+        // 检查文件是否存在
+        String checkCmd = "test -f '" + remotePath + "' && echo 'EXISTS' || echo 'NOT_FOUND'";
+        StringBuilder output = new StringBuilder();
+        int code = SshUtil.exec(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
+                checkCmd, line -> output.append(line).append('\n'));
+        if (code != 0) {
+            throw new IllegalStateException("检查脚本文件失败(exit=" + code + ")");
+        }
+        if (output.toString().contains("EXISTS")) {
+            appendLog("脚本已存在，跳过创建: " + remotePath);
+            return;
+        }
+
+        // 不存在则用 scriptContent 创建
+        if (!StringUtils.hasText(project.getScriptContent())) {
+            appendLog("脚本不存在且未配置脚本内容，跳过创建: " + remotePath);
+            return;
+        }
+        appendLog("脚本不存在，开始创建: " + remotePath);
+        // 用 heredoc 写入文件，引号包裹的 SCRIPT_EOF 禁止变量展开，避免转义问题
+        String createCmd = "cat > '" + remotePath + "' << 'SCRIPT_EOF'\n"
+                + project.getScriptContent() + "\nSCRIPT_EOF";
+        int createCode = SshUtil.exec(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
+                createCmd, this::appendLog);
+        if (createCode != 0) {
+            throw new IllegalStateException("创建脚本文件失败(exit=" + createCode + ")");
+        }
+        // 赋予执行权限
+        SshUtil.exec(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
+                "chmod +x '" + remotePath + "'", this::appendLog);
+        appendLog("脚本创建成功: " + remotePath);
+    }
+
+    /** 步骤6：远程执行部署命令（可选） */
     private void stepRemoteDeploy() {
         if (!StringUtils.hasText(project.getDeployCmd())) {
             appendLog("未配置远程部署命令，跳过");

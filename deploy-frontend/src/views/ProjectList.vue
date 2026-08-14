@@ -84,8 +84,8 @@
     </div>
   </el-card>
 
-  <el-dialog v-model="dialogVisible" :title="form.id ? '编辑项目' : '新增项目'" width="640px" top="4vh">
-    <el-form :model="form" label-width="100px">
+  <el-dialog v-model="dialogVisible" :title="form.id ? '编辑项目' : '新增项目'" width="900px" top="4vh">
+    <el-form :model="form" label-width="120px">
       <el-form-item label="项目名" required>
         <el-input v-model="form.name" placeholder="如 order-service" />
       </el-form-item>
@@ -144,6 +144,16 @@
         <el-input v-if="!form.id || $hasPerm('server:edit')" v-model="form.deployCmd" type="textarea" :rows="2"
                   placeholder="上传后在服务器执行，如 cd /app/order-service && sh deploy.sh；VUE 项目可留空" />
         <el-input v-else :model-value="form.deployCmd || '-'" type="textarea" :rows="2" disabled />
+      </el-form-item>
+      <el-form-item label="目录下脚本名称">
+        <el-input v-if="!form.id || $hasPerm('server:edit')" v-model="form.scriptName"
+                  placeholder="如 deploy.sh，留空则不检查" />
+        <el-input v-else :model-value="form.scriptName || '-'" disabled />
+      </el-form-item>
+      <el-form-item label="目录下脚本内容">
+        <el-input v-if="!form.id || $hasPerm('server:edit')" v-model="form.scriptContent" type="textarea" :rows="9"
+                  placeholder="脚本不存在时自动创建，留空则不创建" />
+        <el-input v-else :model-value="form.scriptContent || '-'" type="textarea" :rows="4" disabled />
       </el-form-item>
     </el-form>
     <template #footer>

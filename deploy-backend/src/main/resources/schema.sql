@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS cc_project (
     artifact_path VARCHAR(255) NOT NULL COMMENT '产物相对路径，支持*通配，如 target/*.jar、dist',
     server_id     BIGINT       NOT NULL COMMENT '目标服务器id',
     upload_dir    VARCHAR(255) NOT NULL COMMENT '服务器上传目录',
-    deploy_cmd    VARCHAR(512) COMMENT '上传后远程执行的部署命令，可空',
+    deploy_cmd      VARCHAR(512) COMMENT '上传后远程执行的部署命令，可空',
+    script_name    VARCHAR(128) COMMENT '目录下脚本名称，如 deploy.sh',
+    script_content TEXT COMMENT '目录下脚本内容，不存在时自动创建',
     create_time   DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time   DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_name (name)

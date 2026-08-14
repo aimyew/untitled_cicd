@@ -67,7 +67,7 @@ async function handleLogin() {
     const result = await authApi.login({ ip: form.value.ip, password: form.value.password })
     ElMessage.success('登录成功')
     onLoginSuccess(result, route.query.from || '/')
-  } catch (e) { /* 拦截器已处理 */ } finally {
+  } catch (e) { ElMessage.error(e.message || '登录失败') } finally {
     loading.value = false
   }
 }

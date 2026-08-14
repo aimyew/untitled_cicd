@@ -49,6 +49,12 @@ public class Project {
     /** 上传后远程执行的部署命令，可空 */
     private String deployCmd;
 
+    /** 目录下脚本名称，如 deploy.sh */
+    private String scriptName;
+
+    /** 目录下脚本内容，不存在时自动创建 */
+    private String scriptContent;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

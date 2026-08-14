@@ -85,6 +85,8 @@ public class ProjectController {
             vo.serverName = serverNameMap.getOrDefault(p.getServerId(), "");
             vo.uploadDir = p.getUploadDir();
             vo.deployCmd = p.getDeployCmd();
+            vo.scriptName = p.getScriptName();
+            vo.scriptContent = p.getScriptContent();
             voList.add(vo);
         }
 
@@ -109,6 +111,14 @@ public class ProjectController {
         Assert.hasText(project.getUploadDir(), "上传目录不能为空");
         if (!org.springframework.util.StringUtils.hasText(project.getBranch())) {
             project.setBranch("dev");
+        }
+        // 脚本名称未填写时，同步清空脚本内容；填写时则内容必填
+        if (!org.springframework.util.StringUtils.hasText(project.getScriptName())) {
+            project.setScriptName(null);
+            project.setScriptContent(null);
+        } else {
+            Assert.hasText(project.getScriptContent(), "填写了目录下脚本名称时，目录下脚本内容不能为空");
+            project.setScriptName(project.getScriptName().trim());
         }
         boolean isNew = project.getId() == null;
         checkEditPerm(isNew ? PermissionCode.PROJECT_ADD : PermissionCode.PROJECT_EDIT);
@@ -181,5 +191,7 @@ public class ProjectController {
         public String serverName;
         public String uploadDir;
         public String deployCmd;
+        public String scriptName;
+        public String scriptContent;
     }
 }
