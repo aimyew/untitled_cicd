@@ -4,7 +4,7 @@
     :title="title"
     width="70%"
     top="5vh"
-    :close-on-click-modal="false"
+    :close-on-click-modal="true"
     @update:model-value="close"
     @closed="onClosed"
   >
@@ -12,6 +12,9 @@
       <el-tag v-if="status === 'RUNNING'" type="warning" effect="dark">部署中...</el-tag>
       <el-tag v-else-if="status === 'SUCCESS'" type="success" effect="dark">部署成功</el-tag>
       <el-tag v-else-if="status === 'FAILED'" type="danger" effect="dark">部署失败</el-tag>
+      <el-tag v-else-if="status === 'CANCELLED'" type="info" effect="dark">部署已取消</el-tag>
+      <el-button v-if="status === 'RUNNING' && isSuperAdmin" type="danger" size="small"
+                 :loading="cancelling" @click="cancelDeploy" style="margin-left: 12px">取消部署</el-button>
     </div>
     <pre ref="logBox" class="log-box">等待日志输出...</pre>
   </el-dialog>
@@ -19,7 +22,9 @@
 
 <script setup>
 import { ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { deployApi } from '../api'
+import { isSuperAdmin } from '../utils/perm'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -32,6 +37,7 @@ const emit = defineEmits(['update:modelValue', 'finished'])
 
 const status = ref('RUNNING')
 const logBox = ref(null)
+const cancelling = ref(false)
 let ws = null
 
 const FINISH_PREFIX = '__DEPLOY_FINISHED__:'
@@ -121,6 +127,20 @@ async function loadStatic() {
 
 function close() {
   emit('update:modelValue', false)
+}
+
+async function cancelDeploy() {
+  try {
+    await ElMessageBox.confirm('确定要取消当前部署吗？', '确认取消', { type: 'warning' })
+  } catch { return }
+  cancelling.value = true
+  try {
+    await deployApi.cancel(props.recordId)
+    appendRaw('[CANCEL] 已发送取消请求，将在当前步骤完成后立即终止')
+    scheduleScroll()
+  } catch (e) { /* 拦截器已提示 */ } finally {
+    cancelling.value = false
+  }
 }
 
 function onClosed() {

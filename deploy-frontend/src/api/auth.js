@@ -21,7 +21,8 @@ export const userApi = {
 export const menuApi = {
   list: () => request.get('/menus'),
   currentVisible: () => request.get('/menus/current-visible'),
-  save: (data) => request.post('/menus', data),
+  create: (data) => request.post('/menus', data),
+  update: (id, data) => request.put(`/menus/${id}`, data),
   remove: (id) => request.delete(`/menus/${id}`)
 }
 

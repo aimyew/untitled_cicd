@@ -16,6 +16,7 @@
             <el-option label="部署中" value="RUNNING" />
             <el-option label="成功" value="SUCCESS" />
             <el-option label="失败" value="FAILED" />
+            <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -33,6 +34,7 @@
         <template #default="{ row }">
           <el-tag v-if="row.status === 'RUNNING'" type="warning" effect="dark">部署中</el-tag>
           <el-tag v-else-if="row.status === 'SUCCESS'" type="success">成功</el-tag>
+          <el-tag v-else-if="row.status === 'CANCELLED'" type="info">已取消</el-tag>
           <el-tag v-else type="danger">失败</el-tag>
         </template>
       </el-table-column>

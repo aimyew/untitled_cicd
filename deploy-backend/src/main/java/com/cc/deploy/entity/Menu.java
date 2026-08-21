@@ -12,13 +12,19 @@ import lombok.Data;
 @TableName("cc_menu")
 public class Menu {
 
+    public static final String TYPE_GROUP = "GROUP";
+    public static final String TYPE_LINK = "LINK";
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
     /** 父菜单id，0表示一级菜单 */
     private Long parentId;
 
-    /** 前端路由路径 */
+    /** 菜单类型：GROUP(分组)/LINK(页面) */
+    private String type;
+
+    /** 前端路由路径（LINK）或分组占位路径（GROUP） */
     private String path;
 
     /** 菜单标题 */

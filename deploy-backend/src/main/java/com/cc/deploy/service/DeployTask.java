@@ -20,6 +20,7 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 单次部署任务：clone/pull → checkout → build → 定位产物(Vue打zip) → SFTP上传 → 远程执行部署脚本
@@ -40,6 +41,13 @@ public class DeployTask implements Runnable {
 
     private final StringBuilder logBuffer = new StringBuilder();
 
+    /** 取消标志 */
+    private volatile boolean cancelled = false;
+    /** 当前正在执行的本地进程（构建阶段） */
+    private final AtomicReference<Process> currentProcess = new AtomicReference<>();
+    /** SFTP 上传会话（用于中断） */
+    private volatile Thread uploadThread = null;
+
     public DeployTask(Project project, ServerInfo server, String serverPassword,
                       DeployRecord record, DeployRecordMapper recordMapper,
                       LogWebSocketHandler logHandler, DeployProperties props, Runnable onFinish) {
@@ -53,15 +61,52 @@ public class DeployTask implements Runnable {
         this.onFinish = onFinish;
     }
 
+    /**
+     * 取消部署
+     *
+     * @return true=成功取消，false=无法取消（已在远程阶段）
+     */
+    public boolean cancel() {
+        String step = record.getCurrentStep();
+        // 远程部署、检查脚本、清理脚本阶段不允许取消
+        if ("远程部署".equals(step) || "检查脚本".equals(step)) {
+            appendLog("[CANCEL] 当前处于远程操作阶段，无法终止");
+            return false;
+        }
+        cancelled = true;
+        appendLog("[CANCEL] 用户请求取消部署...");
+        // 如果在构建阶段，提示将在打包完成后取消
+        if ("构建".equals(step)) {
+            appendLog("[CANCEL] 当前正在构建，将在打包完成后立即取消");
+            return true;
+        }
+        // 如果在上传阶段，中断上传线程
+        Thread ut = uploadThread;
+        if (ut != null && ut.isAlive()) {
+            appendLog("[CANCEL] 中断 SFTP 上传");
+            ut.interrupt();
+        }
+        return true;
+    }
+
+    public boolean isCancelled() {
+        return cancelled;
+    }
+
     @Override
     public void run() {
         boolean success = false;
+        boolean wasCancelled = false;
         try {
             appendLog("========== 开始部署 [" + project.getName() + "] ==========");
             Path projectDir = stepPrepareSource();
+            checkCancelled("拉取代码完成后");
             stepBuild(projectDir);
+            checkCancelled("构建完成后");
             Path artifact = stepResolveArtifact(projectDir);
+            checkCancelled("定位产物完成后");
             stepUpload(artifact);
+            checkCancelled("上传完成后");
             stepEnsureScript();
             try {
                 stepRemoteDeploy();
@@ -70,13 +115,35 @@ public class DeployTask implements Runnable {
                 stepCleanupScript();
             }
             appendLog("========== 部署成功 ==========");
+        } catch (CancelledException e) {
+            wasCancelled = true;
+            appendLog("[CANCEL] 部署已取消");
+            appendLog("========== 部署已取消 ==========");
         } catch (Exception e) {
-            log.error("部署失败: {}", project.getName(), e);
-            appendLog("[ERROR] " + e.getMessage());
-            appendLog("========== 部署失败 ==========");
+            if (cancelled) {
+                wasCancelled = true;
+                appendLog("[CANCEL] 部署已取消（进程被终止）");
+                appendLog("========== 部署已取消 ==========");
+            } else {
+                log.error("部署失败: {}", project.getName(), e);
+                appendLog("[ERROR] " + e.getMessage());
+                appendLog("========== 部署失败 ==========");
+            }
         } finally {
-            finish(success);
+            finish(success, wasCancelled);
         }
+    }
+
+    private void checkCancelled(String phase) {
+        if (cancelled) {
+            appendLog("[CANCEL] " + phase + "检测到取消请求，终止部署");
+            throw new CancelledException();
+        }
+    }
+
+    /** 取消部署专用异常 */
+    private static class CancelledException extends RuntimeException {
+        CancelledException() { super("部署已取消"); }
     }
 
     /** 步骤1：clone（已存在则跳过）+ checkout + pull */
@@ -122,7 +189,8 @@ public class DeployTask implements Runnable {
         if (Project.TYPE_VUE.equals(project.getType())) {
             cmd = ensureNpmLegacyPeerDeps(cmd);
         }
-        CommandUtil.execOrThrow(projectDir.toFile(), cmd, this::appendLog);
+        // 传入 currentProcess 引用
+        CommandUtil.execOrThrow(projectDir.toFile(), cmd, this::appendLog, currentProcess);
     }
 
     /** 为 npm install 命令自动追加 --legacy-peer-deps */
@@ -186,8 +254,13 @@ public class DeployTask implements Runnable {
     /** 步骤4：SFTP 上传 */
     private void stepUpload(Path artifact) {
         updateStep("上传产物");
-        SshUtil.upload(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
-                artifact.toFile(), project.getUploadDir(), this::appendLog);
+        uploadThread = Thread.currentThread();
+        try {
+            SshUtil.upload(server.getHost(), server.getPort(), server.getUsername(), serverPassword,
+                    artifact.toFile(), project.getUploadDir(), this::appendLog);
+        } finally {
+            uploadThread = null;
+        }
     }
 
     /** 步骤5：检查目录下脚本是否存在，不存在则创建 */
@@ -280,9 +353,13 @@ public class DeployTask implements Runnable {
         logHandler.pushLine(record.getId(), msg);
     }
 
-    private void finish(boolean success) {
+    private void finish(boolean success, boolean cancelled) {
         try {
-            record.setStatus(success ? DeployRecord.STATUS_SUCCESS : DeployRecord.STATUS_FAILED);
+            if (cancelled) {
+                record.setStatus(DeployRecord.STATUS_CANCELLED);
+            } else {
+                record.setStatus(success ? DeployRecord.STATUS_SUCCESS : DeployRecord.STATUS_FAILED);
+            }
             record.setEndTime(LocalDateTime.now());
             if (record.getStartTime() != null) {
                 long seconds = Duration.between(record.getStartTime(), record.getEndTime()).getSeconds();

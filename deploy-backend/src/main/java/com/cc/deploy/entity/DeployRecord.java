@@ -17,6 +17,7 @@ public class DeployRecord {
     public static final String STATUS_RUNNING = "RUNNING";
     public static final String STATUS_SUCCESS = "SUCCESS";
     public static final String STATUS_FAILED = "FAILED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
 
     @TableId(type = IdType.AUTO)
     private Long id;

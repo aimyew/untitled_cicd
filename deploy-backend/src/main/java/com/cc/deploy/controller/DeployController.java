@@ -58,6 +58,23 @@ public class DeployController {
     }
 
     /**
+     * 取消部署：仅超管可操作
+     */
+    @PostMapping("/cancel/{recordId}")
+    public BaseResponse<String> cancel(@PathVariable Long recordId) {
+        User user = UserContext.current();
+        if (user == null) throw new ForbiddenException("未登录");
+        if (!user.isSuperAdmin()) throw new ForbiddenException("仅超管可取消部署");
+        boolean cancelled = deployService.cancel(recordId);
+        if (cancelled) {
+            auditService.log("DEPLOY_CANCEL", AuditLog.TARGET_DEPLOY, recordId, "取消部署");
+            return BaseResponse.ok("部署已取消");
+        } else {
+            return BaseResponse.fail("无法取消：任务不存在或已在远程操作阶段");
+        }
+    }
+
+    /**
      * 部署历史列表（不含日志大字段），分页 + 可选 projectName / status 过滤
      */
     @GetMapping("/records")

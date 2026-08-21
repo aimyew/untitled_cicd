@@ -1,10 +1,13 @@
 package com.cc.deploy.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.cc.deploy.auth.*;
 import com.cc.deploy.common.ForbiddenException;
 import com.cc.deploy.common.BaseResponse;
 import com.cc.deploy.common.PageResult;
+import com.cc.deploy.dto.CreateProjectRequest;
+import com.cc.deploy.dto.UpdateProjectRequest;
 import com.cc.deploy.entity.AuditLog;
 import com.cc.deploy.entity.Project;
 import com.cc.deploy.entity.ServerInfo;
@@ -13,12 +16,15 @@ import com.cc.deploy.mapper.ProjectMapper;
 import com.cc.deploy.mapper.ServerInfoMapper;
 import com.cc.deploy.service.AuditService;
 import com.cc.deploy.service.PermissionService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -101,56 +107,83 @@ public class ProjectController {
     }
 
     @PostMapping
-    public BaseResponse<Void> save(@RequestBody Project project) {
-        Assert.hasText(project.getName(), "项目名称不能为空");
-        Assert.hasText(project.getType(), "项目类型不能为空");
-        Assert.hasText(project.getGitUrl(), "Git 地址不能为空");
-        Assert.hasText(project.getBuildCmd(), "构建命令不能为空");
-        Assert.hasText(project.getArtifactPath(), "产物路径不能为空");
-        Assert.notNull(project.getServerId(), "目标服务器不能为空");
-        Assert.hasText(project.getUploadDir(), "上传目录不能为空");
-        if (!org.springframework.util.StringUtils.hasText(project.getBranch())) {
-            project.setBranch("dev");
-        }
-        // 脚本名称未填写时，同步清空脚本内容；填写时则内容必填
-        if (!org.springframework.util.StringUtils.hasText(project.getScriptName())) {
-            project.setScriptName(null);
-            project.setScriptContent(null);
-        } else {
-            Assert.hasText(project.getScriptContent(), "填写了目录下脚本名称时，目录下脚本内容不能为空");
-            project.setScriptName(project.getScriptName().trim());
-        }
-        boolean isNew = project.getId() == null;
-        checkEditPerm(isNew ? PermissionCode.PROJECT_ADD : PermissionCode.PROJECT_EDIT);
+    public BaseResponse<Void> create(@Valid @RequestBody CreateProjectRequest req) {
+        checkEditPerm(PermissionCode.PROJECT_ADD);
         User user = UserContext.current();
         if (user == null) throw new ForbiddenException("未登录");
 
-        // 编辑场景：无 server:edit 权限的非超管，禁止改动敏感字段
-        // 涵盖：本地目录、构建命令、打包Profile、产物路径、目标服务器、上传目录、部署命令
-        if (!isNew && !user.isSuperAdmin() && !permissionService.hasPerm(user.getId(), PermissionCode.SERVER_EDIT)) {
-            Project old = projectMapper.selectById(project.getId());
-            if (old != null) {
-                project.setLocalPath(old.getLocalPath());
-                project.setBuildCmd(old.getBuildCmd());
-                project.setBuildProfile(old.getBuildProfile());
-                project.setArtifactPath(old.getArtifactPath());
-                project.setServerId(old.getServerId());
-                project.setUploadDir(old.getUploadDir());
-                project.setDeployCmd(old.getDeployCmd());
-            }
+        String branch = StringUtils.hasText(req.getBranch()) ? req.getBranch() : "dev";
+
+        // 脚本校验
+        String scriptName = null;
+        String scriptContent = null;
+        if (StringUtils.hasText(req.getScriptName())) {
+            Assert.hasText(req.getScriptContent(), "填写了目录下脚本名称时，目录下脚本内容不能为空");
+            scriptName = req.getScriptName().trim();
+            scriptContent = req.getScriptContent();
         }
 
-        if (isNew) {
-            projectMapper.insert(project);
-            auditService.log("PROJECT_ADD", AuditLog.TARGET_PROJECT, project.getId(),
-                    "name=" + project.getName());
-            // 新建项目后自动把创建者加入该项目的白名单
-            permissionService.grantProjectPerm(user.getId(), project.getId(), user.getId());
-        } else {
-            projectMapper.updateById(project);
-            auditService.log("PROJECT_EDIT", AuditLog.TARGET_PROJECT, project.getId(),
-                    "name=" + project.getName());
+        Project project = new Project();
+        project.setName(req.getName());
+        project.setType(req.getType());
+        project.setGitUrl(req.getGitUrl());
+        project.setBranch(branch);
+        project.setLocalPath(req.getLocalPath());
+        project.setBuildCmd(req.getBuildCmd());
+        project.setBuildProfile(req.getBuildProfile());
+        project.setArtifactPath(req.getArtifactPath());
+        project.setServerId(req.getServerId());
+        project.setUploadDir(req.getUploadDir());
+        project.setDeployCmd(req.getDeployCmd());
+        project.setScriptName(scriptName);
+        project.setScriptContent(scriptContent);
+
+        projectMapper.insert(project);
+        auditService.log("PROJECT_ADD", AuditLog.TARGET_PROJECT, project.getId(), "name=" + req.getName());
+        // 新建项目后自动把创建者加入该项目的白名单
+        permissionService.grantProjectPerm(user.getId(), project.getId(), user.getId());
+        return BaseResponse.ok();
+    }
+
+    @PutMapping("/{id}")
+    public BaseResponse<Void> update(@PathVariable Long id, @Valid @RequestBody UpdateProjectRequest req) {
+        checkEditPerm(PermissionCode.PROJECT_EDIT);
+        User user = UserContext.current();
+        if (user == null) throw new ForbiddenException("未登录");
+
+        String branch = StringUtils.hasText(req.getBranch()) ? req.getBranch() : "dev";
+
+        // 脚本校验
+        String scriptName = null;
+        String scriptContent = null;
+        if (StringUtils.hasText(req.getScriptName())) {
+            Assert.hasText(req.getScriptContent(), "填写了目录下脚本名称时，目录下脚本内容不能为空");
+            scriptName = req.getScriptName().trim();
+            scriptContent = req.getScriptContent();
         }
+
+        LambdaUpdateWrapper<Project> wrapper = new LambdaUpdateWrapper<Project>()
+                .eq(Project::getId, id)
+                .set(Project::getName, req.getName())
+                .set(Project::getType, req.getType())
+                .set(Project::getGitUrl, req.getGitUrl())
+                .set(Project::getBranch, branch)
+                .set(Project::getScriptName, scriptName)
+                .set(Project::getScriptContent, scriptContent);
+
+        // 敏感字段：仅超管可改
+        if (user.isSuperAdmin()) {
+            wrapper.set(Project::getLocalPath, req.getLocalPath())
+                   .set(Project::getBuildCmd, req.getBuildCmd())
+                   .set(Project::getBuildProfile, req.getBuildProfile())
+                   .set(Project::getArtifactPath, req.getArtifactPath())
+                   .set(Project::getServerId, req.getServerId())
+                   .set(Project::getUploadDir, req.getUploadDir())
+                   .set(Project::getDeployCmd, req.getDeployCmd());
+        }
+
+        projectMapper.update(null, wrapper);
+        auditService.log("PROJECT_EDIT", AuditLog.TARGET_PROJECT, id, "name=" + req.getName());
         return BaseResponse.ok();
     }
 

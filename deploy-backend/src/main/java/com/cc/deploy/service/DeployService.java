@@ -43,6 +43,8 @@ public class DeployService {
     private final ExecutorService pool = Executors.newFixedThreadPool(4);
     /** 正在部署中的项目 id */
     private final Set<Long> runningProjects = ConcurrentHashMap.newKeySet();
+    /** recordId -> DeployTask 映射，用于取消部署 */
+    private final Map<Long, DeployTask> runningTasks = new ConcurrentHashMap<>();
 
     /**
      * 触发一次部署
@@ -68,8 +70,13 @@ public class DeployService {
             recordMapper.insert(record);
 
             logHandler.open(record.getId());
-            pool.submit(new DeployTask(project, server, password, record, recordMapper,
-                    logHandler, props, () -> runningProjects.remove(projectId)));
+            DeployTask task = new DeployTask(project, server, password, record, recordMapper,
+                    logHandler, props, () -> {
+                        runningProjects.remove(projectId);
+                        runningTasks.remove(record.getId());
+                    });
+            runningTasks.put(record.getId(), task);
+            pool.submit(task);
             return record.getId();
         } catch (Exception e) {
             runningProjects.remove(projectId);
@@ -79,6 +86,19 @@ public class DeployService {
 
     public boolean isRunning(Long projectId) {
         return runningProjects.contains(projectId);
+    }
+
+    /**
+     * 取消部署
+     *
+     * @return true=成功取消，false=无法取消（已在远程阶段或任务不存在）
+     */
+    public boolean cancel(Long recordId) {
+        DeployTask task = runningTasks.get(recordId);
+        if (task == null) {
+            return false;
+        }
+        return task.cancel();
     }
 
     /**

@@ -25,10 +25,12 @@
       <el-table-column prop="port" label="端口" width="80" />
       <el-table-column prop="username" label="用户名" width="110" />
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-      <el-table-column label="操作" width="230" fixed="right">
+      <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
           <el-button v-if="$hasPerm('server:query')" size="small" :loading="testingId === row.id"
                      @click="testConnect(row)">测试连接</el-button>
+          <el-button v-if="$user && $user.isSuperAdmin === true" size="small" type="warning"
+                     @click="openCommandDialog(row)">远程命令</el-button>
           <el-button v-if="$hasPerm('server:edit')" size="small" type="primary"
                      @click="openDialog(row)">编辑</el-button>
           <el-popconfirm v-if="$user && $user.isSuperAdmin === true" title="确定删除该服务器？" @confirm="remove(row)">
@@ -80,6 +82,53 @@
       <el-button type="primary" :loading="saving" @click="save">保存</el-button>
     </template>
   </el-dialog>
+
+  <!-- 远程命令弹窗 -->
+  <el-dialog v-model="cmdDialogVisible" :title="'远程命令 - ' + cmdServer?.name" width="700px">
+    <!-- 生成 SQL 区域 -->
+    <div style="margin-bottom: 16px">
+      <div style="font-weight: bold; margin-bottom: 8px">新增命令（生成 SQL）</div>
+      <el-form :inline="true" style="margin-bottom: 0">
+        <el-form-item style="margin-bottom: 8px">
+          <el-input v-model="newCmd.name" placeholder="命令名称，如：清理日志" style="width: 180px" />
+        </el-form-item>
+        <el-form-item style="margin-bottom: 8px">
+          <el-input v-model="newCmd.command" placeholder="Linux 命令，如：rm -rf /home/*.log" style="width: 340px" />
+        </el-form-item>
+        <el-form-item style="margin-bottom: 8px">
+          <el-button type="info" @click="generateSql">生成 SQL</el-button>
+        </el-form-item>
+      </el-form>
+      <el-input v-if="generatedSql" v-model="generatedSql" readonly type="textarea" :rows="2"
+                style="font-family: monospace; margin-top: 4px" />
+    </div>
+
+    <el-divider />
+
+    <!-- 已配置命令列表 -->
+    <div>
+      <div style="font-weight: bold; margin-bottom: 8px">已配置命令</div>
+      <el-table :data="commands" v-loading="cmdLoading" size="small" style="width: 100%">
+        <el-table-column prop="name" label="名称" width="140" />
+        <el-table-column prop="command" label="命令" min-width="260" show-overflow-tooltip />
+        <el-table-column label="操作" width="160" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="success" :loading="executingId === row.id"
+                       @click="executeCommand(row)">执行</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <!-- 执行结果 -->
+    <div v-if="execOutput !== null" style="margin-top: 12px">
+      <div style="font-weight: bold; margin-bottom: 4px">
+        执行结果（exitCode: <span :style="{ color: execExitCode === 0 ? '#67c23a' : '#f56c6c' }">{{ execExitCode }}</span>）
+      </div>
+      <el-input v-model="execOutput" readonly type="textarea" :rows="8"
+                style="font-family: monospace" />
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -93,6 +142,17 @@ const dialogVisible = ref(false)
 const saving = ref(false)
 const testingId = ref(null)
 const form = ref({})
+
+// 远程命令相关
+const cmdDialogVisible = ref(false)
+const cmdServer = ref(null)
+const commands = ref([])
+const cmdLoading = ref(false)
+const newCmd = ref({ name: '', command: '' })
+const generatedSql = ref('')
+const executingId = ref(null)
+const execOutput = ref(null)
+const execExitCode = ref(null)
 
 const page = ref(1)
 const pageSize = ref(10)
@@ -129,7 +189,11 @@ function openDialog(row) {
 async function save() {
   saving.value = true
   try {
-    await serverApi.save(form.value)
+    if (form.value.id) {
+      await serverApi.update(form.value.id, form.value)
+    } else {
+      await serverApi.create(form.value)
+    }
     ElMessage.success('保存成功')
     dialogVisible.value = false
     load()
@@ -151,6 +215,49 @@ async function testConnect(row) {
     ElMessage.success(`[${row.name}] 连接成功`)
   } catch (e) { /* 拦截器已提示 */ } finally {
     testingId.value = null
+  }
+}
+
+async function openCommandDialog(row) {
+  cmdServer.value = row
+  commands.value = []
+  newCmd.value = { name: '', command: '' }
+  generatedSql.value = ''
+  execOutput.value = null
+  execExitCode.value = null
+  cmdDialogVisible.value = true
+  cmdLoading.value = true
+  try {
+    commands.value = await serverApi.listCommands(row.id) || []
+  } catch (e) { /* 拦截器已提示 */ } finally {
+    cmdLoading.value = false
+  }
+}
+
+async function generateSql() {
+  if (!newCmd.value.name || !newCmd.value.command) {
+    ElMessage.warning('请填写命令名称和命令内容')
+    return
+  }
+  try {
+    const sql = await serverApi.generateSql(cmdServer.value.id, newCmd.value)
+    generatedSql.value = sql
+  } catch (e) { /* 拦截器已提示 */ }
+}
+
+async function executeCommand(cmd) {
+  executingId.value = cmd.id
+  execOutput.value = null
+  execExitCode.value = null
+  try {
+    const result = await serverApi.execute(cmdServer.value.id, cmd.id)
+    execExitCode.value = result.exitCode
+    execOutput.value = result.output || '(无输出)'
+  } catch (e) {
+    execOutput.value = '执行失败'
+    execExitCode.value = -1
+  } finally {
+    executingId.value = null
   }
 }
 

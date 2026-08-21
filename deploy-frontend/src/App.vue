@@ -4,22 +4,7 @@
     <el-aside width="220px" class="aside">
       <div class="logo">🚀 CC 部署系统</div>
       <el-menu router :default-active="$route.path" class="menu">
-        <template v-for="item in visibleMenus" :key="item.path">
-          <el-sub-menu v-if="item.children && item.children.length" :index="item.path">
-            <template #title>
-              <el-icon><component :is="iconComp(item.icon)" /></el-icon>
-              <span>{{ item.title }}</span>
-            </template>
-            <el-menu-item v-for="sub in item.children" :key="sub.path" :index="sub.path">
-              <el-icon><component :is="iconComp(sub.icon)" /></el-icon>
-              <span>{{ sub.title }}</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item v-else :index="item.path">
-            <el-icon><component :is="iconComp(item.icon)" /></el-icon>
-            <span>{{ item.title }}</span>
-          </el-menu-item>
-        </template>
+        <MenuItem v-for="item in visibleMenus" :key="item.path" :menu="item" />
       </el-menu>
     </el-aside>
     <el-container>
@@ -68,26 +53,13 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, markRaw, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import {
-  Folder, Monitor, Clock, User as UserIcon, DataLine, Setting, Menu as MenuIcon,
-  Document, Files, Picture, VideoPlay, Headset, Promotion, Link, HomeFilled,
-  List, Grid, Tickets, Collection, Management, Opportunity, TrendCharts, QuestionFilled
-} from '@element-plus/icons-vue'
+import { User, ArrowDown } from '@element-plus/icons-vue'
+import MenuItem from './components/MenuItem.vue'
 import { user, logout } from './utils/perm'
 import { authApi, menuApi } from './api/auth'
-
-// element-plus 图标组件映射表（后台菜单配置里的图标名 → 实际组件）
-const ICON_MAP = {
-  Folder, Monitor, Clock, User: UserIcon, DataLine, Setting, Menu: MenuIcon,
-  Document, Files, Picture, VideoPlay, Headset, Promotion, Link, HomeFilled,
-  List, Grid, Tickets, Collection, Management, Opportunity, TrendCharts, QuestionFilled
-}
-function iconComp(name) {
-  return name && ICON_MAP[name] ? markRaw(ICON_MAP[name]) : markRaw(MenuIcon)
-}
 
 // 从后台拉取的菜单原始数据（扁平结构）
 const rawMenus = ref([])
@@ -106,25 +78,29 @@ watch(() => user.value?.id, (id, oldId) => {
 // 兜底：F5 刷新时 user 可能已由 router.beforeEach 里的 initUser 设好，
 // 但 watch 的 immediate 已经触发过，这里不需要再调
 
-// 按 parentId 组装树（只保留一级 + 有子的一级）
-function buildTree(list) {
-  const root = list.filter(m => !m.parentId || m.parentId === 0).map(m => ({ ...m, children: [] }))
-  const idMap = new Map(root.map(m => [m.id, m]))
-  list.forEach(m => {
-    if (m.parentId && idMap.has(m.parentId)) {
-      idMap.get(m.parentId).children.push(m)
-    }
-  })
-  return root
+// 按 parentId 递归组装 N 级树
+function buildTree(list, parentId = 0) {
+  return list
+    .filter(m => (m.parentId || 0) === parentId)
+    .map(m => ({ ...m, children: buildTree(list, m.id) }))
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
 }
 
 // 前端路由已注册的 path 集合（避免后台误配一个不存在的路由，前台点了进 404）
 const registeredPaths = new Set(useRouter().getRoutes().map(r => r.path))
 
-// 可见菜单（后端已按 user.perms 过滤，前端只过滤前端路由未注册的 path）
+// 可见菜单（后端已按 user.perms 过滤）
+// GROUP 菜单：只要有有效子菜单就显示
+// LINK 菜单：自身 path 必须已在前端路由注册
 const visibleMenus = computed(() => {
-  const tree = buildTree(rawMenus.value.filter(m => registeredPaths.has(m.path)))
-  return tree.filter(node => node.children.length > 0 || registeredPaths.has(node.path))
+  function filter(node) {
+    const validChildren = (node.children || []).map(filter).filter(Boolean)
+    if (validChildren.length > 0) {
+      return { ...node, children: validChildren }
+    }
+    return node.type === 'LINK' && registeredPaths.has(node.path) ? { ...node, children: [] } : null
+  }
+  return buildTree(rawMenus.value).map(filter).filter(Boolean)
 })
 
 const userLabel = computed(() => {
@@ -169,10 +145,29 @@ html, body, #app { height: 100%; margin: 0; }
   height: 60px; line-height: 60px; text-align: center;
   color: #fff; font-size: 16px; font-weight: bold;
 }
-.menu { border-right: none; background: #001529; }
-.menu .el-menu-item { color: #ccc; }
-.menu .el-menu-item:hover { background: #112a45; color: #fff; }
-.menu .el-menu-item.is-active { background: #1890ff; color: #fff; }
+.menu {
+  border-right: none;
+  /* Element Plus 菜单主题色变量，所有层级（含嵌套）统一生效 */
+  --el-menu-text-color: #ccc;
+  --el-menu-hover-text-color: #fff;
+  --el-menu-active-color: #fff;
+  --el-menu-bg-color: #001529;
+  --el-menu-hover-bg-color: #112a45;
+  background: #001529;
+}
+/* 强制所有层级菜单项与分组标题颜色，避免嵌套时被覆盖成白色 */
+.menu .el-menu-item,
+.menu .el-sub-menu__title { color: #ccc !important; }
+.menu .el-menu-item:hover,
+.menu .el-sub-menu__title:hover { color: #fff !important; }
+.menu .el-menu-item.is-active { background: #1890ff !important; color: #fff !important; }
+.menu .el-sub-menu.is-active > .el-sub-menu__title { color: #fff !important; }
+/* 强制嵌套子菜单容器与菜单项背景统一，覆盖 Element Plus 默认白底/黑底 */
+.menu,
+.menu .el-menu--inline,
+.menu .el-sub-menu .el-menu,
+.menu .el-menu-item,
+.menu .el-sub-menu__title { background-color: #001529 !important; }
 .header {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 18px; font-weight: 600;

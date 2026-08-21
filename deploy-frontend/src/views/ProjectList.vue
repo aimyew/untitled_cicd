@@ -47,6 +47,7 @@
           <template v-if="lastOf(row.id)">
             <el-tag v-if="lastOf(row.id).status === 'RUNNING'" type="warning" size="small" effect="dark">部署中</el-tag>
             <el-tag v-else-if="lastOf(row.id).status === 'SUCCESS'" type="success" size="small">成功</el-tag>
+            <el-tag v-else-if="lastOf(row.id).status === 'CANCELLED'" type="info" size="small">已取消</el-tag>
             <el-tag v-else type="danger" size="small">失败</el-tag>
           </template>
           <span v-else>-</span>
@@ -224,13 +225,19 @@ function resetSearch() {
 
 async function refreshLast() {
   const ids = list.value.map((p) => p.id)
-  if (!ids.length) { lastMap.value = {}; return }
+  if (!ids.length) { lastMap.value = {}; deployingId.value = null; return }
   try {
     const map = await deployApi.lastByProjects(ids)
-    // axios 把数字 key 的 Map 返回后仍是对象，用数字访问即可
     lastMap.value = map || {}
+    // 同步部署中状态：如果有项目仍在 RUNNING，保持按钮 loading
+    const running = list.value.find(p => {
+      const last = lastMap.value[p.id] || lastMap.value[String(p.id)]
+      return last && last.status === 'RUNNING'
+    })
+    deployingId.value = running ? running.id : null
   } catch (e) {
     lastMap.value = {}
+    deployingId.value = null
   }
 }
 
@@ -260,7 +267,11 @@ function onTypeChange(type) {
 async function save() {
   saving.value = true
   try {
-    await projectApi.save(form.value)
+    if (form.value.id) {
+      await projectApi.update(form.value.id, form.value)
+    } else {
+      await projectApi.create(form.value)
+    }
     ElMessage.success('保存成功')
     dialogVisible.value = false
     load()
@@ -276,12 +287,21 @@ async function remove(row) {
 }
 
 async function deploy(row) {
-  // 检查上次部署是否还在跑，避免重复部署
-  const last = lastOf(row.id)
-  if (last && last.status === 'RUNNING') {
-    ElMessage.warning('上次部署尚未结束，请稍后再试')
-    return
-  }
+  // 先从后端同步最新状态，检查是否已在部署中（跨浏览器场景）
+  try {
+    const map = await deployApi.lastByProjects([row.id])
+    const last = map && (map[row.id] || map[String(row.id)])
+    if (last && last.status === 'RUNNING') {
+      // 已经在部署中，更新按钮状态并打开日志弹窗
+      deployingId.value = row.id
+      currentRecordId.value = last.id
+      currentProjectName.value = row.name
+      logMode.value = 'live'
+      logVisible.value = true
+      return
+    }
+  } catch (e) { /* ignore */ }
+
   deployingId.value = row.id
   try {
     const recordId = await deployApi.start(row.id)
@@ -289,7 +309,7 @@ async function deploy(row) {
     currentProjectName.value = row.name
     logMode.value = 'live'
     logVisible.value = true
-  } catch (e) { /* 拦截器已提示 */ } finally {
+  } catch (e) {
     deployingId.value = null
   }
 }
@@ -298,10 +318,14 @@ async function deploy(row) {
 async function viewLastLog(row) {
   try {
     const map = await deployApi.lastByProjects([row.id])
-    const last = map && map[row.id]
+    const last = map && (map[row.id] || map[String(row.id)])
     if (!last || !last.id) {
       ElMessage.warning('暂无部署记录')
       return
+    }
+    // 同步部署中状态（跨浏览器场景）
+    if (last.status === 'RUNNING') {
+      deployingId.value = row.id
     }
     currentRecordId.value = last.id
     currentProjectName.value = row.name
@@ -311,8 +335,11 @@ async function viewLastLog(row) {
 }
 
 function onDeployFinished(status) {
+  deployingId.value = null
   if (status === 'SUCCESS') {
     ElMessage.success(`[${currentProjectName.value}] 部署成功`)
+  } else if (status === 'CANCELLED') {
+    ElMessage.warning(`[${currentProjectName.value}] 部署已取消`)
   } else {
     ElMessage.error(`[${currentProjectName.value}] 部署失败，请查看日志`)
   }

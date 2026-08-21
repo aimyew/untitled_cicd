@@ -7,38 +7,58 @@
       <el-button @click="load">刷新</el-button>
     </div>
 
-    <el-table :data="list" v-loading="loading" stripe row-key="id">
-      <el-table-column prop="id" label="#" width="70" />
-      <el-table-column label="层级" width="90">
+    <el-table
+      ref="tableRef"
+      :data="treeList"
+      v-loading="loading"
+      row-key="id"
+      :tree-props="{ children: 'children' }"
+      default-expand-all
+      stripe
+      class="menu-table"
+    >
+      <el-table-column label="标题" min-width="180">
         <template #default="{ row }">
-          <el-tag v-if="!row.parentId" size="small">一级</el-tag>
-          <el-tag v-else size="small" type="info">子级</el-tag>
+          <span
+            :class="{ 'title-text': true, 'title-expandable': row.children && row.children.length }"
+            @click="toggleTitle(row)"
+          >{{ row.title }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="title" label="标题" min-width="140" />
-      <el-table-column prop="path" label="路由路径" min-width="160" />
-      <el-table-column prop="icon" label="图标" width="180">
+      <el-table-column label="类型" width="90">
         <template #default="{ row }">
-          <div v-if="row.icon" style="display: flex; align-items: center; gap: 8px">
+          <el-tag v-if="row.type === 'GROUP'" size="small" type="info">分组</el-tag>
+          <el-tag v-else size="small" type="success">页面</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="路由路径" min-width="140">
+        <template #default="{ row }">
+          <span v-if="row.type === 'GROUP'" class="text-hint">-</span>
+          <code v-else class="path-code">{{ row.path }}</code>
+        </template>
+      </el-table-column>
+      <el-table-column prop="icon" label="图标" width="160">
+        <template #default="{ row }">
+          <div v-if="row.icon" class="icon-cell">
             <el-icon :size="16"><component :is="row.icon" /></el-icon>
-            <span>{{ row.icon }}</span>
+            <span class="icon-name">{{ row.icon }}</span>
           </div>
           <span v-else class="text-hint">-</span>
         </template>
       </el-table-column>
-      <el-table-column prop="permCode" label="权限码" min-width="160">
+      <el-table-column prop="permCode" label="权限码" min-width="140">
         <template #default="{ row }">
-          <span v-if="row.permCode">{{ row.permCode }}</span>
+          <code v-if="row.permCode" class="perm-code">{{ row.permCode }}</code>
           <span v-else class="text-hint">所有人可见</span>
         </template>
       </el-table-column>
-      <el-table-column prop="sortOrder" label="排序" width="80" />
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column prop="sortOrder" label="排序" width="80" align="center" />
+      <el-table-column label="操作" width="160" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button size="small" type="primary" @click="openDialog(row)">编辑</el-button>
+          <el-button size="small" type="primary" link @click="openDialog(row)">编辑</el-button>
           <el-popconfirm title="确定删除该菜单？子菜单也会删除" @confirm="remove(row)">
             <template #reference>
-              <el-button size="small" type="danger">删除</el-button>
+              <el-button size="small" type="danger" link>删除</el-button>
             </template>
           </el-popconfirm>
         </template>
@@ -48,6 +68,12 @@
 
   <el-dialog v-model="dialogVisible" :title="form.id ? '编辑菜单' : '新增菜单'" width="520px">
     <el-form :model="form" label-width="90px">
+      <el-form-item label="菜单类型" required>
+        <el-radio-group v-model="form.type">
+          <el-radio-button value="LINK">页面菜单</el-radio-button>
+          <el-radio-button value="GROUP">分组菜单</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
       <el-form-item label="父菜单">
         <el-select v-model="form.parentId" placeholder="无（作为一级菜单）" clearable style="width: 100%">
           <el-option :value="0" label="无（一级菜单）" />
@@ -57,7 +83,7 @@
       <el-form-item label="标题" required>
         <el-input v-model="form.title" placeholder="如：菜单管理" />
       </el-form-item>
-      <el-form-item label="路由路径" required>
+      <el-form-item v-if="form.type === 'LINK'" label="路由路径" required>
         <el-input v-model="form.path" placeholder="如 /menus" />
       </el-form-item>
       <el-form-item label="图标名">
@@ -73,7 +99,7 @@
           </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item label="权限码">
+      <el-form-item v-if="form.type === 'LINK'" label="权限码">
         <el-input v-model="form.permCode" placeholder="留空=所有人可见；填 project:query 等=按权限码过滤" />
       </el-form-item>
       <el-form-item label="排序">
@@ -89,6 +115,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+
 import { ElMessage } from 'element-plus'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import { menuApi } from '../api/auth'
@@ -98,12 +125,39 @@ const ICON_NAMES = Object.keys(ElementPlusIconsVue).sort()
 
 const list = ref([])
 const loading = ref(false)
+const tableRef = ref(null)
 
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = ref({})
 
-const parentOptions = computed(() => list.value.filter(m => !m.parentId || m.parentId === 0))
+// 收集 menuId 的所有后代 id，避免把自己或后代选为父菜单形成环
+function collectDescendantIds(menuId, allMenus) {
+  const ids = new Set()
+  const children = allMenus.filter(m => m.parentId === menuId)
+  children.forEach(child => {
+    ids.add(child.id)
+    collectDescendantIds(child.id, allMenus).forEach(id => ids.add(id))
+  })
+  return ids
+}
+
+// 父菜单可选任意菜单，但编辑时排除自身及其后代防止循环
+const parentOptions = computed(() => {
+  const excludeIds = form.value.id ? collectDescendantIds(form.value.id, list.value) : new Set()
+  excludeIds.add(form.value.id)
+  return list.value.filter(m => !excludeIds.has(m.id))
+})
+
+// 将扁平列表按 parentId 递归构建树，同级按 sortOrder 排序
+function buildTree(list, parentId = 0) {
+  return list
+    .filter(m => (m.parentId || 0) === parentId)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+    .map(m => ({ ...m, children: buildTree(list, m.id) }))
+}
+
+const treeList = computed(() => buildTree(list.value))
 
 async function load() {
   loading.value = true
@@ -117,16 +171,28 @@ async function load() {
 function openDialog(row) {
   form.value = row
     ? { ...row }
-    : { parentId: 0, sortOrder: 0 }
+    : { parentId: 0, type: 'LINK', sortOrder: 0 }
   dialogVisible.value = true
 }
 
 async function save() {
-  if (!form.value.path) return ElMessage.warning('路由路径不能为空')
   if (!form.value.title) return ElMessage.warning('菜单标题不能为空')
+  if (!form.value.type) return ElMessage.warning('菜单类型不能为空')
+  if (form.value.type === 'LINK' && !form.value.path) return ElMessage.warning('页面菜单的路由路径不能为空')
   saving.value = true
   try {
-    await menuApi.save(form.value)
+    if (form.value.id) {
+      // 编辑：只发允许修改的字段
+      await menuApi.update(form.value.id, {
+        title: form.value.title,
+        icon: form.value.icon,
+        permCode: form.value.permCode,
+        sortOrder: form.value.sortOrder
+      })
+    } else {
+      // 新增：发所有字段
+      await menuApi.create(form.value)
+    }
     ElMessage.success('保存成功')
     dialogVisible.value = false
     load()
@@ -141,10 +207,73 @@ async function remove(row) {
   load()
 }
 
+function toggleTitle(row) {
+  if (row.children && row.children.length) {
+    tableRef.value.toggleRowExpansion(row)
+  }
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .toolbar { margin-bottom: 14px; display: flex; justify-content: space-between; }
 .text-hint { color: #999; font-size: 12px; }
+
+/* 树形表格统一行高与细节 */
+.menu-table :deep(.el-table__row) {
+  height: 48px;
+}
+.menu-table :deep(.el-table__cell) {
+  padding: 0 !important;
+}
+.menu-table :deep(.el-table__cell .cell) {
+  height: 48px;
+  line-height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+/* 隐藏默认展开箭头，由点击标题触发 */
+.menu-table :deep(.el-table__expand-icon) {
+  display: none;
+}
+.menu-table :deep(.el-table__expand-icon--placeholder),
+.menu-table :deep(.el-table__placeholder) {
+  display: none;
+}
+
+/* 可展开的标题文字 */
+.title-expandable {
+  cursor: pointer;
+  color: #409eff;
+}
+
+.icon-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.icon-name {
+  color: #606266;
+  font-size: 13px;
+}
+
+.path-code {
+  background: #f5f7fa;
+  color: #409eff;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: monospace;
+}
+.perm-code {
+  background: #fef0f0;
+  color: #f56c6c;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: monospace;
+}
 </style>

@@ -7,13 +7,18 @@ import com.cc.deploy.auth.TokenService;
 import com.cc.deploy.auth.UserContext;
 import com.cc.deploy.common.BaseResponse;
 import com.cc.deploy.common.PageResult;
+import com.cc.deploy.dto.ResetPasswordRequest;
+import com.cc.deploy.dto.UpdateDeployPermissionsRequest;
+import com.cc.deploy.dto.UpdateUserNicknameRequest;
+import com.cc.deploy.dto.UpdateUserPermissionsRequest;
+import com.cc.deploy.dto.UpdateUserStatusRequest;
 import com.cc.deploy.entity.FuncPermDef;
 import com.cc.deploy.entity.User;
 import com.cc.deploy.service.AuditService;
 import com.cc.deploy.service.PermissionService;
 import com.cc.deploy.service.UserService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.util.Assert;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,7 +29,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 用户管理（仅超管可调用）
@@ -87,56 +91,47 @@ public class UserController {
 
     @PostMapping("/{id}/status")
     @RequirePerm(PermissionCode.USER_MANAGE)
-    public BaseResponse<Void> updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        String status = body.get("status");
-        Assert.hasText(status, "状态不能为空");
-        userService.updateStatus(id, status);
-        auditService.log("USER_STATUS", "USER", id, "status=" + status);
+    public BaseResponse<Void> updateStatus(@PathVariable Long id, @Valid @RequestBody UpdateUserStatusRequest req) {
+        userService.updateStatus(id, req.getStatus());
+        auditService.log("USER_STATUS", "USER", id, "status=" + req.getStatus());
         return BaseResponse.ok();
     }
 
     @PostMapping("/{id}/nickname")
     @RequirePerm(PermissionCode.USER_MANAGE)
-    public BaseResponse<Void> updateNickname(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        String nickname = body.get("nickname");
-        userService.updateNickname(id, nickname);
-        auditService.log("USER_NICKNAME", "USER", id, "nickname=" + nickname);
+    public BaseResponse<Void> updateNickname(@PathVariable Long id, @RequestBody UpdateUserNicknameRequest req) {
+        userService.updateNickname(id, req.getNickname());
+        auditService.log("USER_NICKNAME", "USER", id, "nickname=" + req.getNickname());
         return BaseResponse.ok();
     }
 
     @PostMapping("/{id}/reset-password")
     @RequirePerm(PermissionCode.USER_MANAGE)
-    public BaseResponse<Void> resetPassword(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        String newPassword = body.get("newPassword");
-        Assert.hasText(newPassword, "新密码不能为空");
-        userService.resetPassword(id, newPassword);
+    public BaseResponse<Void> resetPassword(@PathVariable Long id, @Valid @RequestBody ResetPasswordRequest req) {
+        userService.resetPassword(id, req.getNewPassword());
         auditService.log("USER_RESET_PASSWORD", "USER", id, "超管重置密码");
         return BaseResponse.ok();
     }
 
     @PostMapping("/{id}/permissions")
     @RequirePerm(PermissionCode.USER_MANAGE)
-    public BaseResponse<Void> updatePermissions(@PathVariable Long id, @RequestBody Map<String, List<String>> body) {
-        List<String> codes = body.get("codes");
-        Assert.notNull(codes, "权限码列表不能为空");
+    public BaseResponse<Void> updatePermissions(@PathVariable Long id, @Valid @RequestBody UpdateUserPermissionsRequest req) {
         Long grantBy = UserContext.currentUserId();
-        permissionService.replacePerms(id, codes, grantBy);
+        permissionService.replacePerms(id, req.getCodes(), grantBy);
         // 权限变更：强制该用户重新登录，避免浏览器缓存旧权限
         tokenService.revokeAll(id);
-        auditService.log("USER_PERMISSIONS", "USER", id, "codes=" + codes);
+        auditService.log("USER_PERMISSIONS", "USER", id, "codes=" + req.getCodes());
         return BaseResponse.ok();
     }
 
     @PostMapping("/{id}/deploy-permissions")
     @RequirePerm(PermissionCode.USER_MANAGE)
-    public BaseResponse<Void> updateDeployPermissions(@PathVariable Long id, @RequestBody Map<String, List<Long>> body) {
-        List<Long> projectIds = body.get("projectIds");
-        Assert.notNull(projectIds, "项目 id 列表不能为空");
+    public BaseResponse<Void> updateDeployPermissions(@PathVariable Long id, @Valid @RequestBody UpdateDeployPermissionsRequest req) {
         Long grantBy = UserContext.currentUserId();
-        permissionService.replaceDeployPerms(id, projectIds, grantBy);
+        permissionService.replaceDeployPerms(id, req.getProjectIds(), grantBy);
         // 项目白名单变更：强制该用户重新登录，避免浏览器缓存旧白名单
         tokenService.revokeAll(id);
-        auditService.log("USER_DEPLOY_PERMISSIONS", "USER", id, "projectIds=" + projectIds);
+        auditService.log("USER_DEPLOY_PERMISSIONS", "USER", id, "projectIds=" + req.getProjectIds());
         return BaseResponse.ok();
     }
 

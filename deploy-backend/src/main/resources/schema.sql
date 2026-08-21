@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS `cc_audit_log`,`cc_deploy_permission`,`cc_deploy_record`,`cc_func_perm_def`,`cc_menu`,`cc_permission`,`cc_project`,`cc_server`,`cc_user`;
+DROP TABLE IF EXISTS `cc_audit_log`,`cc_deploy_permission`,`cc_deploy_record`,`cc_func_perm_def`,`cc_menu`,`cc_permission`,`cc_project`,`cc_server`,`cc_server_command`,`cc_user`;
 
 CREATE TABLE IF NOT EXISTS cc_audit_log (
     id           BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -60,7 +60,8 @@ INSERT IGNORE INTO cc_func_perm_def (perm_code, title, description, perm_type, s
 CREATE TABLE IF NOT EXISTS cc_menu (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     parent_id   BIGINT       NOT NULL DEFAULT 0 COMMENT '父菜单id，0表示一级菜单',
-    path        VARCHAR(128) NOT NULL COMMENT '前端路由路径',
+    type        VARCHAR(16)  NOT NULL DEFAULT 'LINK' COMMENT '菜单类型: GROUP(分组)/LINK(页面)',
+    path        VARCHAR(128) NOT NULL COMMENT '前端路由路径或分组占位路径',
     title       VARCHAR(64)  NOT NULL COMMENT '菜单标题',
     icon        VARCHAR(64)  COMMENT '图标名（element-plus 图标组件名）',
     perm_code   VARCHAR(64)  COMMENT '所需权限码（空=超管专属或所有人可见）',
@@ -69,13 +70,13 @@ CREATE TABLE IF NOT EXISTS cc_menu (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='菜单配置';
 
 -- 初始化菜单（INSERT IGNORE 保证幂等）
-INSERT IGNORE INTO cc_menu (parent_id, path, title, icon, perm_code, sort_order) VALUES
-(0, '/projects', '项目管理',   'Folder',   'project:query',      10),
-(0, '/servers',  '服务器管理', 'Monitor',  'server:query',       20),
-(0, '/history',  '部署历史',   'Clock',    'history:query',      30),
-(0, '/users',    '用户管理',   'User',     'user:manage',   40),
-(0, '/menus',    '菜单管理',   'Setting',  'menu:manage',   50),
-(0, '/audit',    '审计日志',   'DataLine', 'audit:view',         60);
+INSERT IGNORE INTO cc_menu (parent_id, type, path, title, icon, perm_code, sort_order) VALUES
+(0, 'LINK', '/projects', '项目管理',   'Folder',   'project:query',      10),
+(0, 'LINK', '/servers',  '服务器管理', 'Monitor',  'server:query',       20),
+(0, 'LINK', '/history',  '部署历史',   'Clock',    'history:query',      30),
+(0, 'LINK', '/users',    '用户管理',   'User',     'user:manage',        40),
+(0, 'LINK', '/menus',    '菜单管理',   'Memo',  'menu:manage',        50),
+(0, 'LINK', '/audit',    '审计日志',   'DataLine', 'audit:view',         60);
 
 CREATE TABLE IF NOT EXISTS cc_permission (
     id                 BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -118,6 +119,14 @@ CREATE TABLE IF NOT EXISTS cc_server (
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_host_port (host, port)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='部署目标服务器';
+
+CREATE TABLE IF NOT EXISTS cc_server_command (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    server_id   BIGINT       NOT NULL COMMENT '关联服务器id',
+    name        VARCHAR(64)  NOT NULL COMMENT '命令显示名称',
+    command     VARCHAR(512) NOT NULL COMMENT '实际执行的Linux命令',
+    sort_order  INT          NOT NULL DEFAULT 0 COMMENT '排序'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT ='服务器预配置命令';
 
 CREATE TABLE IF NOT EXISTS cc_user (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
